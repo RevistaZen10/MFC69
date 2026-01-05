@@ -1,4 +1,3 @@
-
 import type { LanguageOption, StyleGuideOption } from '../types';
 
 export const LANGUAGES: LanguageOption[] = [
@@ -9,9 +8,12 @@ export const LANGUAGES: LanguageOption[] = [
 ];
 
 export const AVAILABLE_MODELS: {name: string, description: string}[] = [
-    { name: 'gemini-3-pro-preview', description: 'Google: Gemini 3 Pro (Complex Reasoning & Higher Quality)' },
-    { name: 'gemini-3-flash-preview', description: 'Google: Gemini 3 Flash (Fast & Efficient)' },
-    { name: 'grok-2-latest', description: 'x.ai: Grok-2 (Requires separate Key)' },
+    { name: 'gemini-2.5-flash', description: 'Fast and efficient for most tasks.' },
+    { name: 'gemini-2.5-pro', description: 'More powerful for complex generation and reasoning.' },
+    { name: 'gemini-3-pro-preview', description: 'Next-gen model for advanced reasoning and STEM tasks.' },
+    { name: 'grok-4-latest', description: 'Powerful model from x.ai.' },
+    { name: 'gemini-2.0-flash', description: 'High-throughput model with a large context window.' },
+    { name: 'gemini-2.0-flash-lite', description: 'Lightweight and very fast for high-volume tasks.' },
 ];
 
 export const STYLE_GUIDES: StyleGuideOption[] = [
