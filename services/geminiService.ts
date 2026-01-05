@@ -21,16 +21,19 @@ async function callModel(
         googleSearch?: boolean;
     } = {}
 ): Promise<GenerateContentResponse> {
-    // IMPORTANTE: Buscar a API_KEY dentro da função para refletir mudanças do diálogo
-    const apiKey = process.env.API_KEY;
-    if (!apiKey || apiKey === 'undefined' || apiKey === '') {
-        throw new Error("API Key não encontrada. Use o botão 'Conectar Gemini' no topo.");
+    // IMPORTANTE: Buscar a API_KEY diretamente de process.env.API_KEY
+    // Se for injetada via dialog ou Cloudflare, ela estará disponível aqui.
+    let apiKey = process.env.API_KEY;
+    
+    // Tratamento para strings que representam 'vazio' ou 'indefinido' provenientes do ambiente
+    if (!apiKey || apiKey === 'undefined' || apiKey === 'null' || apiKey === '') {
+        throw new Error("API Key não encontrada. Clique no botão 'Conectar Gemini' no topo para selecionar uma chave válida.");
     }
 
-    // Criar nova instância a cada chamada para garantir o uso da chave atual
+    // Criar nova instância a cada chamada conforme diretrizes para garantir o uso da chave mais recente
     const ai = new GoogleGenAI({ apiKey });
     
-    // Ativa o pensamento profundo se for um modelo da série 2.5 ou 3
+    // Ativa o pensamento profundo (Thinking Config) para modelos da série 2.5
     const isThinkingModel = model.includes('2.5') || model.includes('3');
     
     try {
@@ -46,21 +49,27 @@ async function callModel(
                 ...(isThinkingModel && {
                     thinkingConfig: {
                         // Budget balanceado para modelos 2.5
-                        thinkingBudget: model.includes('native-audio') ? 24576 : 12000 
+                        thinkingBudget: 16000 
                     }
                 })
             },
         });
         return response;
     } catch (error: any) {
-        console.error("Gemini API Error Details:", error);
-        throw new Error(`Erro na API (${model}): ${error.message || 'Falha na requisição'}`);
+        console.error("Gemini API Error Detail:", error);
+        
+        // Erro comum de cota ou projeto não pago ao usar modelos preview
+        if (error.message?.includes("Requested entity was not found")) {
+            throw new Error("Sua chave de API pode não ter acesso a este modelo. Tente selecionar uma chave de um projeto com faturamento ativado.");
+        }
+        
+        throw new Error(`Erro na API (${model}): ${error.message || 'Falha na comunicação com a IA'}`);
     }
 }
 
 export async function generatePaperTitle(topic: string, language: Language, model: string, discipline: string): Promise<string> {
     const languageName = LANGUAGES.find(l => l.code === language)?.name || 'English';
-    const response = await callModel(model, `Pesquisador Sênior em ${discipline}.`, `Gere um título científico para: "${topic}" em ${languageName}. Sem aspas.`);
+    const response = await callModel(model, `Pesquisador Sênior em ${discipline}.`, `Gere um título científico para: "${topic}" em ${languageName}. Retorne apenas o texto, sem aspas.`);
     return response.text?.trim().replace(/"/g, '') || 'Untitled Paper';
 }
 
@@ -72,7 +81,7 @@ export async function generateInitialPaper(title: string, language: Language, pa
     let template = ARTICLE_TEMPLATE.replace('% Babel package will be added dynamically based on language', `\\usepackage[${babelLanguage}]{babel}`)
                                   .replace('__ALL_AUTHORS_LATEX_BLOCK__', authorsStr);
 
-    const response = await callModel(model, `Escritor acadêmico especialista em LaTeX. Pense profundamente. Idioma: ${languageName}.`, `Escreva o artigo completo para "${title}" usando este template:\n${template}`, { googleSearch: true });
+    const response = await callModel(model, `Escritor acadêmico especialista em LaTeX. Use raciocínio profundo para densidade científica. Idioma: ${languageName}.`, `Escreva o artigo completo para "${title}" usando rigorosamente este template:\n${template}`, { googleSearch: true });
     
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
@@ -106,27 +115,27 @@ export async function analyzePaper(paperContent: string, pageCount: number, mode
         required: ["analysis"],
     };
 
-    const response = await callModel(model, `Analista científico rigoroso. Retorno JSON.`, `Analise este artigo LaTeX:\n${paperContent}`, { jsonOutput: true, responseSchema });
+    const response = await callModel(model, `Analista de periódicos científicos. Retorno JSON rigoroso.`, `Analise este artigo LaTeX:\n${paperContent}`, { jsonOutput: true, responseSchema });
     return JSON.parse(response.text || '{"analysis": []}');
 }
 
 export async function improvePaper(paperContent: string, analysis: AnalysisResult, language: Language, model: string): Promise<string> {
     const feedback = analysis.analysis.filter(a => a.score < 8.5).map(a => `- ${a.improvement}`).join('\n');
-    const response = await callModel(model, `Editor acadêmico. Refine o LaTeX.`, `Melhorias:\n${feedback}\n\nCódigo:\n${paperContent}`);
+    const response = await callModel(model, `Editor-chefe acadêmico. Refine o LaTeX aplicando as melhorias solicitadas.`, `Melhorias:\n${feedback}\n\nCódigo:\n${paperContent}`);
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
     return paperMatch ? paperMatch[1].trim() : text.replace(/```latex|```/g, '').trim();
 }
 
 export async function fixLatexPaper(paperContent: string, compilationError: string, model: string): Promise<string> {
-    const response = await callModel(model, `Corretor de sintaxe LaTeX.`, `Erro:\n${compilationError}\n\nCódigo:\n${paperContent}`);
+    const response = await callModel(model, `Especialista em depuração de LaTeX.`, `Corrija o código abaixo com base no erro de compilação:\nErro:\n${compilationError}\n\nCódigo:\n${paperContent}`);
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
     return paperMatch ? paperMatch[1].trim() : text.replace(/```latex|```/g, '').trim();
 }
 
 export async function reformatPaperWithStyleGuide(paperContent: string, styleGuide: StyleGuide, model: string): Promise<string> {
-    const response = await callModel(model, `Normas ${styleGuide}.`, `Aplique as normas ${styleGuide} nas citações deste código:\n${paperContent}`);
+    const response = await callModel(model, `Formatador de normas ${styleGuide}.`, `Aplique estritamente as normas ${styleGuide} nas citações deste código:\n${paperContent}`);
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
     return paperMatch ? paperMatch[1].trim() : text.replace(/```latex|```/g, '').trim();

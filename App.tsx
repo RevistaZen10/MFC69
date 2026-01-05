@@ -20,10 +20,7 @@ const App: React.FC = () => {
     const [isApiModalOpen, setIsApiModalOpen] = useState(false);
     const [isPersonalDataModalOpen, setIsPersonalDataModalOpen] = useState(false);
     
-    const [hasGeminiKey, setHasGeminiKey] = useState(() => {
-        const envKey = process.env.API_KEY;
-        return !!(envKey && envKey !== 'undefined' && envKey !== '');
-    });
+    const [hasGeminiKey, setHasGeminiKey] = useState(false);
 
     const [language, setLanguage] = useState<Language>('en');
     const [generationModel, setGenerationModel] = useState('gemini-2.5-flash-native-audio-preview-09-2025');
@@ -54,6 +51,18 @@ const App: React.FC = () => {
         if (typeof pdfjsLib !== 'undefined') {
             pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
+
+        // Verifica status da chave no AI Studio ou Ambiente
+        const checkKey = async () => {
+            if (window.aistudio?.hasSelectedApiKey) {
+                const hasKey = await window.aistudio.hasSelectedApiKey();
+                setHasGeminiKey(hasKey);
+            } else {
+                const envKey = process.env.API_KEY;
+                setHasGeminiKey(!!(envKey && envKey !== 'undefined' && envKey !== 'null' && envKey !== ''));
+            }
+        };
+        checkKey();
     }, []);
 
     const handleConnectKey = async () => {
@@ -67,15 +76,15 @@ const App: React.FC = () => {
 
     const handleFullAutomation = async () => {
         setIsGenerating(true);
-        setGenerationStatus("Gerando título com Gemini 2.5...");
-        setGenerationProgress(10);
+        setGenerationStatus("Iniciando fluxo Gemini 2.5...");
+        setGenerationProgress(5);
         
         try {
             const topic = getRandomTopic(selectedDiscipline);
             const title = await generatePaperTitle(topic, language, analysisModel, selectedDiscipline);
             setGeneratedTitle(title);
             
-            setGenerationStatus("Gerando artigo (Gemini 2.5 Thinking Mode)...");
+            setGenerationStatus("Gerando artigo (Thinking Ativado)...");
             setGenerationProgress(40);
             const { paper, sources } = await generateInitialPaper(title, language, pageCount, generationModel, authors);
             
@@ -83,7 +92,7 @@ const App: React.FC = () => {
             setGenerationProgress(70);
             const analysis = await analyzePaper(paper, pageCount, analysisModel);
             
-            setGenerationStatus("Finalizando LaTeX...");
+            setGenerationStatus("Refinando LaTeX final...");
             setGenerationProgress(90);
             const improved = await improvePaper(paper, analysis, language, generationModel);
             
@@ -95,7 +104,7 @@ const App: React.FC = () => {
             setStep(2);
         } catch (error: any) {
             setGenerationStatus(`Erro: ${error.message}`);
-            alert(`Erro na API: Verifique sua chave ou conexão.`);
+            alert(`Falha na API: ${error.message}. Por favor, reconecte sua chave.`);
         } finally {
             setIsGenerating(false);
         }
@@ -105,22 +114,23 @@ const App: React.FC = () => {
 
     return (
         <div className="container">
-            <ApiKeyModal isOpen={isApiModalOpen} onClose={() => setIsApiModalOpen(false)} onSave={() => { setHasGeminiKey(true); setIsApiModalOpen(false); }} />
+            <ApiKeyModal isOpen={isApiModalOpen} onClose={() => setIsApiModalOpen(false)} onSave={(keys) => { setHasGeminiKey(keys.gemini.length > 0); setIsApiModalOpen(false); }} />
             <PersonalDataModal isOpen={isPersonalDataModalOpen} onClose={() => setIsPersonalDataModalOpen(false)} onSave={(d) => { setAuthors(d); setIsPersonalDataModalOpen(false); }} initialData={authors} />
             
             <div className="main-header">
                 <div className="flex justify-between items-center">
                     <div>
                         <h1>🔬 Fluxo Integrado de Publicação Científica</h1>
-                        <p>Plataforma: Gemini 2.5 (High Performance)</p>
+                        <p>Powered by Gemini 2.5 (High Performance Generation)</p>
                     </div>
                     <div className="flex gap-2 items-center">
                         <button 
                             onClick={handleConnectKey} 
                             className={`px-4 py-2 rounded-lg font-bold transition-all shadow-sm flex items-center gap-2 ${hasGeminiKey ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-indigo-600 text-white animate-pulse'}`}
                         >
-                            {hasGeminiKey ? "Gemini 2.5 Conectado" : "Conectar API Key"}
+                            {hasGeminiKey ? "✓ Gemini 2.5 Conectado" : "Conectar API Key"}
                         </button>
+                        <button onClick={() => setIsApiModalOpen(true)} className="p-2 hover:bg-gray-100 rounded-full" title="Configurações">⚙️</button>
                     </div>
                 </div>
             </div>
@@ -139,24 +149,29 @@ const App: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div>
                             <LanguageSelector languages={LANGUAGES} selectedLanguage={language} onSelect={setLanguage} />
-                            <ModelSelector models={AVAILABLE_MODELS} selectedModel={generationModel} onSelect={setGenerationModel} label="Modelo de Geração 2.5:" />
-                            <select value={selectedDiscipline} onChange={e => setSelectedDiscipline(e.target.value)} className="w-full p-2 border rounded mt-4">
-                                {getAllDisciplines().map(d => <option key={d} value={d}>{d}</option>)}
-                            </select>
+                            <ModelSelector models={AVAILABLE_MODELS} selectedModel={generationModel} onSelect={setGenerationModel} label="Motor de Geração 2.5:" />
+                            <div className="mt-4">
+                                <label className="block text-sm font-bold mb-2">Disciplina:</label>
+                                <select value={selectedDiscipline} onChange={e => setSelectedDiscipline(e.target.value)} className="w-full p-2 border rounded">
+                                    {getAllDisciplines().map(d => <option key={d} value={d}>{d}</option>)}
+                                </select>
+                            </div>
                             <div className="mt-6 text-center">
-                                <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Iniciar Gerador Profissional" loadingText="IA Processando..." />
+                                <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Iniciar Gerador Profissional" loadingText="IA Pensando..." />
                             </div>
                         </div>
-                        <div className="bg-gray-50 p-6 rounded-lg flex flex-col justify-center border-2 border-dashed border-gray-200">
+                        <div className="bg-gray-50 p-6 rounded-lg flex flex-col justify-center border-2 border-dashed border-gray-200 min-h-[300px]">
                             {isGenerating ? (
                                 <div className="space-y-4">
                                     <ProgressBar progress={generationProgress} isVisible={true} />
                                     <p className="text-center font-bold text-indigo-600 animate-pulse">{generationStatus}</p>
+                                    <p className="text-xs text-center text-gray-500">O Gemini 2.5 está processando raciocínio acadêmico profundo.</p>
                                 </div>
                             ) : (
                                 <div className="text-center text-gray-500">
-                                    <p className="mb-2">Aguardando início...</p>
-                                    <p className="text-xs">Tecnologia Gemini 2.5 habilitada com Raciocínio Profundo.</p>
+                                    <p className="text-5xl mb-4">🧬</p>
+                                    <p className="font-bold mb-2">Pronto para a Geração 2.5</p>
+                                    <p className="text-sm">Selecione o modelo 2.5 para obter os melhores resultados científicos com fundamentação teórica sólida.</p>
                                 </div>
                             )}
                         </div>
@@ -168,7 +183,7 @@ const App: React.FC = () => {
                 <div className="card">
                     <LatexCompiler code={latexCode} onCodeChange={setLatexCode} />
                     <div className="mt-4 flex gap-4">
-                        <button onClick={() => setStep(3)} className="btn btn-success flex-1">Avançar para Zenodo</button>
+                        <button onClick={() => setStep(3)} className="btn btn-success flex-1">Seguir para Zenodo</button>
                         <button onClick={() => setStep(1)} className="btn bg-gray-200 flex-1">Ajustar Configurações</button>
                     </div>
                 </div>
