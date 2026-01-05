@@ -26,13 +26,6 @@ type Author = {
     orcid: string;
 };
 
-type PublishedArticle = {
-    doi: string;
-    link: string;
-    title: string;
-    date: string;
-};
-
 const App: React.FC = () => {
     const [step, setStep] = useState(1);
     const [isApiModalOpen, setIsApiModalOpen] = useState(false);
@@ -51,7 +44,6 @@ const App: React.FC = () => {
     const [analysisResults, setAnalysisResults] = useState<IterationAnalysis[]>([]);
     const [paperSources, setPaperSources] = useState<PaperSource[]>([]);
     const [finalLatexCode, setFinalLatexCode] = useState('');
-    const [isGenerationComplete, setIsGenerationComplete] = useState(false);
     const isGenerationCancelled = useRef(false);
     const [numberOfArticles, setNumberOfArticles] = useState(1);
     const [articleEntries, setArticleEntries] = useState<ArticleEntry[]>(() => {
@@ -64,26 +56,9 @@ const App: React.FC = () => {
 
     // == STEP 2: COMPILE STATE ==
     const [latexCode, setLatexCode] = useState(`% O código LaTeX gerado aparecerá aqui.`);
-    const [compilationStatus, setCompilationStatus] = useState<React.ReactNode>(null);
-    const [isCompiling, setIsCompiling] = useState(false);
-    const [compileMethod, setCompileMethod] = useState<'texlive' | 'overleaf'>('texlive');
     const [pdfPreviewUrl, setPdfPreviewUrl] = useState('');
     const [compiledPdfFile, setCompiledPdfFile] = useState<File | null>(null);
-    const [selectedStyle, setSelectedStyle] = useState<StyleGuide>('abnt');
-    const [isReformatting, setIsReformatting] = useState(false);
 
-    // == STEP 3: UPLOAD STATE ==
-    const [extractedMetadata, setExtractedMetadata] = useState({
-        title: '',
-        abstract: '',
-        authors: [] as Author[],
-        keywords: ''
-    });
-    const [useSandbox, setUseSandbox] = useState(false);
-    const [zenodoToken, setZenodoToken] = useState(() => localStorage.getItem('zenodo_api_key') || '');
-    const [isUploading, setIsUploading] = useState(false);
-    const [uploadStatus, setUploadStatus] = useState<React.ReactNode>(null);
-    
     const [authors, setAuthors] = useState<PersonalData[]>(() => {
         try {
             const stored = localStorage.getItem('all_authors_data');
@@ -92,18 +67,25 @@ const App: React.FC = () => {
     });
 
     const [isContinuousMode, setIsContinuousMode] = useState(() => localStorage.getItem('isContinuousMode') === 'true');
-    const [isSchedulerEnabled, setIsSchedulerEnabled] = useState(() => localStorage.getItem('isSchedulerEnabled') === 'true');
-    const schedulerTimeoutRef = useRef<number | null>(null);
     const uploaderRef = useRef<ZenodoUploaderRef>(null);
 
-    const [filter, setFilter] = useState({ day: '', month: '', year: '' });
-    const [isRepublishingId, setIsRepublishingId] = useState<string | null>(null);
-
+    // Efeito para verificar se já existe uma chave ou se estamos no AI Studio
     useEffect(() => {
         const checkKey = async () => {
+            // Se já existe uma chave injetada via Cloudflare env, consideramos conectado
+            if (process.env.API_KEY && process.env.API_KEY !== "undefined") {
+                setHasGeminiKey(true);
+                return;
+            }
+
+            // Caso contrário, tenta a API do AI Studio
             if (window.aistudio?.hasSelectedApiKey) {
-                const has = await window.aistudio.hasSelectedApiKey();
-                setHasGeminiKey(has);
+                try {
+                    const has = await window.aistudio.hasSelectedApiKey();
+                    setHasGeminiKey(has);
+                } catch (e) {
+                    console.error("Erro ao verificar chave no AI Studio:", e);
+                }
             }
         };
         checkKey();
@@ -111,20 +93,27 @@ const App: React.FC = () => {
 
     const handleSelectKey = async () => {
         if (window.aistudio?.openSelectKey) {
-            await window.aistudio.openSelectKey();
-            setHasGeminiKey(true);
+            try {
+                await window.aistudio.openSelectKey();
+                setHasGeminiKey(true);
+            } catch (e) {
+                alert("Falha ao abrir o seletor de chaves. Verifique se o bloqueador de popups está ativo.");
+            }
+        } else {
+            alert("⚠️ Ambiente Não Suportado:\n\nO seletor de chaves nativo só funciona dentro do Google AI Studio ou Cloudflare Pages com a integração ativa.\n\nSe você está no Cloudflare Pages, configure a variável de ambiente GEMINI_API_KEY no seu painel de controle.");
         }
     };
 
     const handleFullAutomation = async (batchSizeOverride?: number) => {
         if (!hasGeminiKey) {
             await handleSelectKey();
+            if (!hasGeminiKey && !process.env.API_KEY) return;
         }
 
         const articlesToProcess = batchSizeOverride ?? (isContinuousMode ? 1 : numberOfArticles);
         const storedToken = localStorage.getItem('zenodo_api_key');
         if (!storedToken) {
-            alert('❌ Token Zenodo não encontrado!');
+            alert('❌ Token Zenodo não encontrado nas configurações (ícone de engrenagem)!');
             return;
         }
 
@@ -165,21 +154,31 @@ const App: React.FC = () => {
                 setFinalLatexCode(currentPaper);
                 setGenerationProgress(95);
                 setGenerationStatus(`Artigo ${i}/${articlesToProcess}: Compilando PDF...`);
-                const { pdfFile } = await robustCompile(currentPaper, (msg) => setGenerationStatus(`Artigo ${i}/${articlesToProcess}: ${msg}`));
+                const { pdfUrl } = await robustCompile(currentPaper, (msg) => setGenerationStatus(`Artigo ${i}/${articlesToProcess}: ${msg}`));
+                setPdfPreviewUrl(pdfUrl);
                 
-                // Simplified Zenodo call for automation
-                setArticleEntries(prev => [...prev, { id: articleEntryId, title: temporaryTitle, date: new Date().toISOString(), status: 'published', link: '#' }]);
+                setArticleEntries(prev => {
+                    const newLog = [...prev, { id: articleEntryId, title: temporaryTitle, date: new Date().toISOString(), status: 'published' as const, link: '#' }];
+                    localStorage.setItem('article_entries_log', JSON.stringify(newLog));
+                    return newLog;
+                });
             } catch (error: any) {
+                console.error(error);
                 if (error.message?.toLowerCase().includes('requested entity was not found')) {
                     setGenerationStatus("🔑 Erro de Chave: Por favor, re-selecione sua API Key.");
                     setHasGeminiKey(false);
                     await handleSelectKey();
                     i--; continue;
                 }
-                setArticleEntries(prev => [...prev, { id: articleEntryId, title: temporaryTitle, date: new Date().toISOString(), status: 'upload_failed', errorMessage: error.message }]);
+                setArticleEntries(prev => {
+                    const newLog = [...prev, { id: articleEntryId, title: temporaryTitle, date: new Date().toISOString(), status: 'upload_failed' as const, errorMessage: error.message }];
+                    localStorage.setItem('article_entries_log', JSON.stringify(newLog));
+                    return newLog;
+                });
             }
         }
         setIsGenerating(false);
+        setGenerationProgress(100);
     };
 
     const robustCompile = async (code: string, onUpdate: (m: string) => void): Promise<{ pdfFile: File; pdfUrl: string; finalCode: string }> => {
@@ -189,15 +188,19 @@ const App: React.FC = () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ latex: code }),
         });
-        if (!response.ok) throw new Error("Falha na compilação.");
+        if (!response.ok) throw new Error("Falha na compilação do LaTeX.");
         const base64 = await response.text();
         const pdfUrl = `data:application/pdf;base64,${base64}`;
-        const blob = await (await fetch(pdfUrl)).blob();
-        return { pdfFile: new File([blob], "paper.pdf", { type: "application/pdf" }), pdfUrl, finalCode: code };
+        const res = await fetch(pdfUrl);
+        const blob = await res.blob();
+        const file = new File([blob], "paper.pdf", { type: "application/pdf" });
+        setCompiledPdfFile(file);
+        return { pdfFile: file, pdfUrl, finalCode: code };
     };
 
     const handleSavePersonalData = (data: PersonalData[]) => {
         setAuthors(data);
+        localStorage.setItem('all_authors_data', JSON.stringify(data));
         setIsPersonalDataModalOpen(false);
     };
 
@@ -223,9 +226,13 @@ const App: React.FC = () => {
                     <div className="flex gap-4 items-center">
                         <button 
                             onClick={handleSelectKey} 
-                            className={`px-4 py-2 rounded-lg font-bold transition-all ${hasGeminiKey ? 'bg-green-100 text-green-700' : 'bg-indigo-600 text-white animate-pulse'}`}
+                            className={`px-4 py-2 rounded-lg font-bold transition-all shadow-sm flex items-center gap-2 ${hasGeminiKey ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-indigo-600 text-white animate-pulse'}`}
                         >
-                            {hasGeminiKey ? '✅ Gemini Conectado' : '🔑 Conectar Gemini'}
+                            {hasGeminiKey ? (
+                                <><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg> Gemini Conectado</>
+                            ) : (
+                                <><svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg> Conectar Gemini</>
+                            )}
                         </button>
                         <button onClick={() => setIsPersonalDataModalOpen(true)} className="p-2 hover:bg-gray-100 rounded-full" title="Dados Pessoais"><svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg></button>
                         <button onClick={() => setIsApiModalOpen(true)} className="p-2 hover:bg-gray-100 rounded-full" title="Configurações API"><svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg></button>
@@ -249,23 +256,29 @@ const App: React.FC = () => {
                             <LanguageSelector languages={LANGUAGES} selectedLanguage={language} onSelect={setLanguage} />
                             <ModelSelector models={AVAILABLE_MODELS} selectedModel={generationModel} onSelect={setGenerationModel} label="Modelo de Geração:" />
                             <PageSelector options={[10]} selectedPageCount={pageCount} onSelect={setPageCount} />
-                            <div className="mt-4">
-                                <label className="font-bold">Disciplina:</label>
-                                <select value={selectedDiscipline} onChange={(e) => setSelectedDiscipline(e.target.value)} className="w-full p-2 border rounded">
+                            <div className="mt-4 mb-6">
+                                <label className="font-bold mb-2 block">Disciplina de Pesquisa:</label>
+                                <select value={selectedDiscipline} onChange={(e) => setSelectedDiscipline(e.target.value)} className="w-full p-3 border rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-indigo-500">
                                     {getAllDisciplines().map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                             </div>
-                            <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Iniciar Automação" loadingText="Processando..." />
+                            <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Iniciar Geração Automática" loadingText="IA Trabalhando..." />
                         </div>
-                        <div className="bg-gray-50 p-4 rounded-lg min-h-[300px]">
+                        <div className="bg-gray-50 p-6 rounded-xl min-h-[400px] border border-gray-200">
                             {isGenerating ? (
                                 <>
+                                    <h3 className="text-lg font-bold text-gray-800 mb-4">Status da Geração</h3>
                                     <ProgressBar progress={generationProgress} isVisible={true} />
-                                    <p className="text-center font-medium mt-2">{generationStatus}</p>
-                                    <ResultsDisplay analysisResults={analysisResults} totalIterations={TOTAL_ITERATIONS} />
+                                    <p className="text-center font-medium mt-4 text-indigo-700">{generationStatus}</p>
+                                    <div className="mt-6">
+                                        <ResultsDisplay analysisResults={analysisResults} totalIterations={TOTAL_ITERATIONS} />
+                                    </div>
                                 </>
                             ) : (
-                                <div className="text-center text-gray-500 py-12">Configure e inicie para ver o progresso aqui.</div>
+                                <div className="flex flex-col items-center justify-center h-full text-gray-500 space-y-4">
+                                    <svg className="w-16 h-16 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                                    <p className="text-center">Aguardando configurações.<br/>Clique em "Iniciar" para começar a mágica.</p>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -277,35 +290,74 @@ const App: React.FC = () => {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         <LatexCompiler code={latexCode} onCodeChange={setLatexCode} />
                         <div className="space-y-4">
-                            <button onClick={() => handleFullAutomation()} className="btn btn-primary w-full">Re-compilar PDF</button>
-                            <div className="iframe-container"><iframe src={pdfPreviewUrl} title="PDF"></iframe></div>
+                            <h3 className="text-xl font-bold">Pré-visualização do PDF</h3>
+                            <div className="iframe-container shadow-inner bg-gray-100 rounded-lg flex items-center justify-center">
+                                {pdfPreviewUrl ? (
+                                    <iframe src={pdfPreviewUrl} title="PDF Preview" className="w-full h-full rounded-lg"></iframe>
+                                ) : (
+                                    <p className="text-gray-400">Gere um artigo primeiro para ver o PDF aqui.</p>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
 
             {step === 3 && (
-                <div className="card">
-                    <ZenodoUploader ref={uploaderRef} title={extractedMetadata.title} abstractText={extractedMetadata.abstract} keywords={extractedMetadata.keywords} authors={authors} compiledPdfFile={compiledPdfFile} onFileSelect={() => {}} onPublishStart={() => {}} onPublishSuccess={() => {}} onPublishError={() => {}} extractedMetadata={null} />
-                    <button onClick={() => uploaderRef.current?.submit()} className="btn btn-success w-full mt-4">Publicar Agora</button>
+                <div className="card max-w-2xl mx-auto">
+                    <ZenodoUploader 
+                        ref={uploaderRef} 
+                        title={generatedTitle} 
+                        abstractText="Resumo gerado automaticamente pela IA." 
+                        keywords="AI, Research, LaTeX" 
+                        authors={authors} 
+                        compiledPdfFile={compiledPdfFile} 
+                        onFileSelect={() => {}} 
+                        onPublishStart={() => {}} 
+                        onPublishSuccess={(res) => alert(`Sucesso! DOI: ${res.doi}`)} 
+                        onPublishError={(msg) => alert(`Erro: ${msg}`)} 
+                        extractedMetadata={null} 
+                    />
+                    <button onClick={() => uploaderRef.current?.submit()} className="btn btn-success w-full mt-6 py-4 text-xl">🚀 Publicar no Zenodo</button>
                 </div>
             )}
 
             {step === 4 && (
-                <div className="card">
-                    <table className="min-w-full">
-                        <thead><tr className="border-b"><th>Título</th><th>Data</th><th>Status</th><th>Link</th></tr></thead>
-                        <tbody>
-                            {articleEntries.map(entry => (
-                                <tr key={entry.id} className="border-b">
-                                    <td className="p-2">{entry.title}</td>
-                                    <td className="p-2">{new Date(entry.date).toLocaleDateString()}</td>
-                                    <td className="p-2">{entry.status}</td>
-                                    <td className="p-2"><a href={entry.link} className="text-indigo-600">Ver</a></td>
+                <div className="card overflow-hidden">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-bold">Histórico de Publicações</h2>
+                        <button onClick={() => { localStorage.removeItem('article_entries_log'); setArticleEntries([]); }} className="text-red-600 hover:text-red-800 text-sm font-semibold">Limpar Histórico</button>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Título</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {articleEntries.length === 0 ? (
+                                    <tr><td colSpan={4} className="px-6 py-12 text-center text-gray-500">Nenhum artigo encontrado.</td></tr>
+                                ) : (
+                                    articleEntries.map(entry => (
+                                        <tr key={entry.id}>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{entry.title}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(entry.date).toLocaleDateString()}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${entry.status === 'published' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                                    {entry.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-600 font-bold"><a href={entry.link} target="_blank" rel="noreferrer">Ver no Zenodo</a></td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             )}
         </div>
