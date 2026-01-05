@@ -1,18 +1,18 @@
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React from 'react';
 
 interface ErrorBoundaryProps {
-  children?: ReactNode;
+  children?: React.ReactNode;
 }
 
 interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
-  errorInfo: ErrorInfo | null;
+  errorInfo: React.ErrorInfo | null;
 }
 
-// Fixed: Inheriting directly from Component instead of React.Component can often resolve issues with inherited member visibility in certain TS configurations.
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+// Fix: Use React.Component explicitly to ensure properties like setState and props are inherited correctly.
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   public state: ErrorBoundaryState = {
     hasError: false,
     error: null,
@@ -24,9 +24,9 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     return { hasError: true, error: error };
   }
 
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error("Uncaught error:", error, errorInfo);
-    // Fixed: setState is correctly inherited from Component.
+    // Fix: setState is a method provided by React.Component.
     this.setState({
       error: error,
       errorInfo: errorInfo,
@@ -35,7 +35,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
   render() {
     if (this.state.hasError) {
-      // Custom fallback UI for when an error occurs
+      // You can render any custom fallback UI
       return (
         <div style={{ padding: '20px', textAlign: 'center', border: '1px solid red', borderRadius: '8px', margin: '20px', backgroundColor: '#ffe6e6' }}>
           <h2 style={{ color: 'red' }}>Oops! Something went wrong.</h2>
@@ -52,7 +52,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       );
     }
 
-    // Fixed: props is correctly inherited from Component.
+    // Fix: props is a property of the React.Component class.
     return this.props.children;
   }
 }
