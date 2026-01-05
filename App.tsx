@@ -2,89 +2,43 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { generateInitialPaper, analyzePaper, improvePaper, generatePaperTitle, fixLatexPaper, reformatPaperWithStyleGuide } from './services/geminiService';
 import type { Language, IterationAnalysis, PaperSource, AnalysisResult, StyleGuide, ArticleEntry, PersonalData } from './types';
-import { LANGUAGES, AVAILABLE_MODELS, ANALYSIS_TOPICS, ALL_TOPICS_BY_DISCIPLINE, getAllDisciplines, getRandomTopic, FIX_OPTIONS, STYLE_GUIDES, TOTAL_ITERATIONS, DISCIPLINE_AUTHORS } from './constants';
-
+import { LANGUAGES, AVAILABLE_MODELS, ALL_TOPICS_BY_DISCIPLINE, getAllDisciplines, getRandomTopic, STYLE_GUIDES, TOTAL_ITERATIONS } from './constants';
 
 import LanguageSelector from './components/LanguageSelector';
 import ModelSelector from './components/ModelSelector';
-import PageSelector from './components/PageSelector';
 import ActionButton from './components/ActionButton';
 import ProgressBar from './components/ProgressBar';
-import ResultsDisplay from './components/ResultsDisplay';
-import SourceDisplay from './components/SourceDisplay';
 import LatexCompiler from './components/LatexCompiler';
 import ApiKeyModal from './components/ApiKeyModal';
-import StyleGuideSelector from './components/StyleGuideSelector';
-import ZenodoUploader, { type ZenodoUploaderRef } from './components/ZenodoUploader';
 import PersonalDataModal from './components/PersonalDataModal';
 
 declare const pdfjsLib: any;
 declare const window: any;
-
-type Author = {
-    name: string;
-    affiliation: string;
-    orcid: string;
-};
-
-type PublishedArticle = {
-    doi: string;
-    link: string;
-    title: string;
-    date: string;
-};
 
 const App: React.FC = () => {
     const [step, setStep] = useState(1);
     const [isApiModalOpen, setIsApiModalOpen] = useState(false);
     const [isPersonalDataModalOpen, setIsPersonalDataModalOpen] = useState(false);
     
-    // Verificação de chave prioritária: Cloudflare (process.env.API_KEY)
     const [hasGeminiKey, setHasGeminiKey] = useState(() => {
         const envKey = process.env.API_KEY;
         return !!(envKey && envKey !== 'undefined' && envKey !== '');
     });
 
     const [language, setLanguage] = useState<Language>('en');
-    // Modelos atualizados para gemini-3-flash-preview conforme diretrizes
-    const [generationModel, setGenerationModel] = useState('gemini-3-flash-preview');
-    const [analysisModel, setAnalysisModel] = useState('gemini-3-flash-preview');
+    const [generationModel, setGenerationModel] = useState('gemini-2.5-pro-preview');
+    const [analysisModel, setAnalysisModel] = useState('gemini-2.5-flash-preview');
     const [pageCount, setPageCount] = useState(10);
+    
     const [isGenerating, setIsGenerating] = useState(false);
     const [generationProgress, setGenerationProgress] = useState(0);
     const [generationStatus, setGenerationStatus] = useState('');
     const [generatedTitle, setGeneratedTitle] = useState('');
-    const [analysisResults, setAnalysisResults] = useState<IterationAnalysis[]>([]);
     const [paperSources, setPaperSources] = useState<PaperSource[]>([]);
     const [finalLatexCode, setFinalLatexCode] = useState('');
-    const [isGenerationComplete, setIsGenerationComplete] = useState(false);
-    const isGenerationCancelled = useRef(false);
-    const [numberOfArticles, setNumberOfArticles] = useState(1);
-    const [articleEntries, setArticleEntries] = useState<ArticleEntry[]>(() => {
-        try {
-            const stored = localStorage.getItem('article_entries_log');
-            return stored ? JSON.parse(stored) : [];
-        } catch { return []; }
-    });
     const [selectedDiscipline, setSelectedDiscipline] = useState<string>(getAllDisciplines()[0]);
 
     const [latexCode, setLatexCode] = useState(`% O código LaTeX gerado aparecerá aqui.`);
-    const [compilationStatus, setCompilationStatus] = useState<React.ReactNode>(null);
-    const [isCompiling, setIsCompiling] = useState(false);
-    const [compileMethod, setCompileMethod] = useState<'texlive' | 'overleaf'>('texlive');
-    const [pdfPreviewUrl, setPdfPreviewUrl] = useState('');
-    const [compiledPdfFile, setCompiledPdfFile] = useState<File | null>(null);
-    const [selectedStyle, setSelectedStyle] = useState<StyleGuide>('abnt');
-    const [isReformatting, setIsReformatting] = useState(false);
-
-    const [extractedMetadata, setExtractedMetadata] = useState({
-        title: '', abstract: '', authors: [] as Author[], keywords: ''
-    });
-    const [useSandbox, setUseSandbox] = useState(false);
-    const [zenodoToken, setZenodoToken] = useState(() => localStorage.getItem('zenodo_api_key') || '');
-    const [isUploading, setIsUploading] = useState(false);
-    const [uploadStatus, setUploadStatus] = useState<React.ReactNode>(null);
-    const [keywordsInput, setKeywordsInput] = useState('');
     
     const [authors, setAuthors] = useState<PersonalData[]>(() => {
         try {
@@ -95,10 +49,6 @@ const App: React.FC = () => {
             return [{ name: 'SÉRGIO DE ANDRADE, PAULO', affiliation: 'Faculdade de Guarulhos (FG)', orcid: '0009-0004-2555-3178' }];
         }
     });
-
-    const [isContinuousMode, setIsContinuousMode] = useState(() => localStorage.getItem('isContinuousMode') === 'true');
-    const [isSchedulerEnabled, setIsSchedulerEnabled] = useState(() => localStorage.getItem('isSchedulerEnabled') === 'true');
-    const uploaderRef = useRef<ZenodoUploaderRef>(null);
 
     useEffect(() => {
         if (typeof pdfjsLib !== 'undefined') {
@@ -122,18 +72,35 @@ const App: React.FC = () => {
             return;
         }
         setIsGenerating(true);
-        setGenerationStatus("Iniciando geração automática...");
+        setGenerationStatus("Gerando título com Gemini 2.5...");
+        setGenerationProgress(10);
+        
         try {
             const topic = getRandomTopic(selectedDiscipline);
             const title = await generatePaperTitle(topic, language, analysisModel, selectedDiscipline);
             setGeneratedTitle(title);
+            
+            setGenerationStatus("Escrevendo artigo (Gemini 2.5 Pro Thinking)...");
+            setGenerationProgress(40);
             const { paper, sources } = await generateInitialPaper(title, language, pageCount, generationModel, authors);
-            setFinalLatexCode(paper);
+            
+            setGenerationStatus("Analisando qualidade rigorosa...");
+            setGenerationProgress(70);
+            const analysis = await analyzePaper(paper, pageCount, analysisModel);
+            
+            setGenerationStatus("Refinando código LaTeX...");
+            setGenerationProgress(90);
+            const improved = await improvePaper(paper, analysis, language, generationModel);
+            
+            setFinalLatexCode(improved);
+            setLatexCode(improved);
             setPaperSources(sources);
-            setGenerationStatus("Concluído!");
-            setIsGenerationComplete(true);
+            setGenerationStatus("Concluído com Gemini 2.5 Pro!");
+            setGenerationProgress(100);
+            setStep(2);
         } catch (error: any) {
             setGenerationStatus(`Erro: ${error.message}`);
+            console.error("Workflow Error:", error);
         } finally {
             setIsGenerating(false);
         }
@@ -150,7 +117,7 @@ const App: React.FC = () => {
                 <div className="flex justify-between items-center">
                     <div>
                         <h1>🔬 Fluxo Integrado de Publicação Científica</h1>
-                        <p>Automação via Cloudflare GEMINI_API_KEY</p>
+                        <p>IA: Gemini 2.5 Pro (Thinking Enabled)</p>
                     </div>
                     <div className="flex gap-2 items-center">
                         <button 
@@ -179,19 +146,25 @@ const App: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div>
                             <LanguageSelector languages={LANGUAGES} selectedLanguage={language} onSelect={setLanguage} />
-                            <ModelSelector models={AVAILABLE_MODELS} selectedModel={generationModel} onSelect={setGenerationModel} label="Geração:" />
-                            <select value={selectedDiscipline} onChange={e => setSelectedDiscipline(e.target.value)} className="w-full p-2 border rounded">
+                            <ModelSelector models={AVAILABLE_MODELS} selectedModel={generationModel} onSelect={setGenerationModel} label="Geração (Sugestão: 2.5 Pro):" />
+                            <select value={selectedDiscipline} onChange={e => setSelectedDiscipline(e.target.value)} className="w-full p-2 border rounded mb-4 mt-4">
                                 {getAllDisciplines().map(d => <option key={d} value={d}>{d}</option>)}
                             </select>
                             <div className="mt-6 text-center">
-                                <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Gerar Artigo" loadingText="Trabalhando..." />
+                                <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Iniciar Gerador 2.5 Pro" loadingText="IA Pensando..." />
                             </div>
                         </div>
-                        <div className="bg-gray-50 p-4 rounded-lg">
+                        <div className="bg-gray-50 p-6 rounded-lg flex flex-col justify-center border-2 border-dashed border-gray-200">
                             {isGenerating ? (
-                                <><ProgressBar progress={generationProgress} isVisible={true} /><p className="text-center">{generationStatus}</p></>
+                                <div className="space-y-4">
+                                    <ProgressBar progress={generationProgress} isVisible={true} />
+                                    <p className="text-center font-bold text-indigo-600 animate-pulse">{generationStatus}</p>
+                                </div>
                             ) : (
-                                <div className="text-center p-8">Configurações prontas. Chave detectada automaticamente via Cloudflare.</div>
+                                <div className="text-center text-gray-500">
+                                    <p className="mb-2">Aguardando início...</p>
+                                    <p className="text-xs">Utilizando Gemini 2.5 Pro para máxima densidade científica.</p>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -200,19 +173,11 @@ const App: React.FC = () => {
 
             {step === 2 && (
                 <div className="card">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <LatexCompiler code={latexCode} onCodeChange={setLatexCode} />
-                        <div className="space-y-6">
-                            <button onClick={() => setStep(3)} className="btn btn-success w-full">Seguir para Publicação</button>
-                        </div>
+                    <LatexCompiler code={latexCode} onCodeChange={setLatexCode} />
+                    <div className="mt-4 flex gap-4">
+                        <button onClick={() => setStep(3)} className="btn btn-success flex-1">Seguir para Publicação</button>
+                        <button onClick={() => setStep(1)} className="btn bg-gray-200 flex-1">Voltar</button>
                     </div>
-                </div>
-            )}
-            
-            {step === 4 && (
-                <div className="card">
-                    <h2 className="text-2xl font-bold mb-4">Artigos Publicados</h2>
-                    {articleEntries.map(a => <div key={a.id} className="border-b p-4">{a.title} - {a.status}</div>)}
                 </div>
             )}
         </div>

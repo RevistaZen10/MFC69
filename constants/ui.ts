@@ -9,9 +9,9 @@ export const LANGUAGES: LanguageOption[] = [
 ];
 
 export const AVAILABLE_MODELS: {name: string, description: string}[] = [
-    { name: 'gemini-3-flash-preview', description: 'Google: Fast and efficient (Recomendado)' },
-    { name: 'gemini-3-pro-preview', description: 'Google: Advanced reasoning and STEM' },
-    { name: 'grok-2-latest', description: 'x.ai: Powerful model (Requer x.ai Key)' },
+    { name: 'gemini-2.5-pro-preview', description: 'Google: 2.5 Pro (Raciocínio Avançado & STEM)' },
+    { name: 'gemini-2.5-flash-preview', description: 'Google: 2.5 Flash (Veloz e Eficiente)' },
+    { name: 'grok-2-latest', description: 'x.ai: Modelo Grok-2 (Requer x.ai Key)' },
 ];
 
 export const STYLE_GUIDES: StyleGuideOption[] = [
