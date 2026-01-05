@@ -21,11 +21,13 @@ async function callModel(
         googleSearch?: boolean;
     } = {}
 ): Promise<GenerateContentResponse> {
+    // IMPORTANTE: Buscar a API_KEY dentro da função para refletir mudanças do diálogo
     const apiKey = process.env.API_KEY;
-    if (!apiKey || apiKey === 'undefined') {
-        throw new Error("API Key não encontrada no ambiente (Cloudflare).");
+    if (!apiKey || apiKey === 'undefined' || apiKey === '') {
+        throw new Error("API Key não encontrada. Use o botão 'Conectar Gemini' no topo.");
     }
 
+    // Criar nova instância a cada chamada para garantir o uso da chave atual
     const ai = new GoogleGenAI({ apiKey });
     
     // Ativa o pensamento profundo se for um modelo da série 2.5 ou 3
@@ -43,23 +45,22 @@ async function callModel(
                 ...(config.googleSearch && { tools: [{ googleSearch: {} }] }),
                 ...(isThinkingModel && {
                     thinkingConfig: {
-                        // Budget para modelos 2.5 Pro é até 32768. 
-                        // Usamos um valor equilibrado para performance e qualidade.
-                        thinkingBudget: model.includes('pro') ? 16000 : 4000 
+                        // Budget balanceado para modelos 2.5
+                        thinkingBudget: model.includes('native-audio') ? 24576 : 12000 
                     }
                 })
             },
         });
         return response;
     } catch (error: any) {
-        console.error("Gemini API Critical Error:", error);
+        console.error("Gemini API Error Details:", error);
         throw new Error(`Erro na API (${model}): ${error.message || 'Falha na requisição'}`);
     }
 }
 
 export async function generatePaperTitle(topic: string, language: Language, model: string, discipline: string): Promise<string> {
     const languageName = LANGUAGES.find(l => l.code === language)?.name || 'English';
-    const response = await callModel(model, `Pesquisador Sênior em ${discipline}.`, `Gere um título científico inovador para: "${topic}" em ${languageName}. Retorne apenas o título, sem aspas.`);
+    const response = await callModel(model, `Pesquisador Sênior em ${discipline}.`, `Gere um título científico para: "${topic}" em ${languageName}. Sem aspas.`);
     return response.text?.trim().replace(/"/g, '') || 'Untitled Paper';
 }
 
@@ -71,7 +72,7 @@ export async function generateInitialPaper(title: string, language: Language, pa
     let template = ARTICLE_TEMPLATE.replace('% Babel package will be added dynamically based on language', `\\usepackage[${babelLanguage}]{babel}`)
                                   .replace('__ALL_AUTHORS_LATEX_BLOCK__', authorsStr);
 
-    const response = await callModel(model, `Escritor acadêmico especialista em LaTeX. Pense profundamente para garantir rigor científico. Idioma: ${languageName}.`, `Escreva o artigo científico completo para "${title}" utilizando exatamente este template LaTeX:\n${template}`, { googleSearch: true });
+    const response = await callModel(model, `Escritor acadêmico especialista em LaTeX. Pense profundamente. Idioma: ${languageName}.`, `Escreva o artigo completo para "${title}" usando este template:\n${template}`, { googleSearch: true });
     
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
@@ -105,27 +106,27 @@ export async function analyzePaper(paperContent: string, pageCount: number, mode
         required: ["analysis"],
     };
 
-    const response = await callModel(model, `Analista de periódicos científicos de alto impacto. Retorno estrito em JSON.`, `Analise o seguinte artigo LaTeX quanto ao rigor e qualidade:\n${paperContent}`, { jsonOutput: true, responseSchema });
+    const response = await callModel(model, `Analista científico rigoroso. Retorno JSON.`, `Analise este artigo LaTeX:\n${paperContent}`, { jsonOutput: true, responseSchema });
     return JSON.parse(response.text || '{"analysis": []}');
 }
 
 export async function improvePaper(paperContent: string, analysis: AnalysisResult, language: Language, model: string): Promise<string> {
     const feedback = analysis.analysis.filter(a => a.score < 8.5).map(a => `- ${a.improvement}`).join('\n');
-    const response = await callModel(model, `Editor-chefe acadêmico. Refine o código LaTeX com base no feedback sem alterar a estrutura básica.`, `Feedback de Melhoria:\n${feedback}\n\nCódigo LaTeX Original:\n${paperContent}`);
+    const response = await callModel(model, `Editor acadêmico. Refine o LaTeX.`, `Melhorias:\n${feedback}\n\nCódigo:\n${paperContent}`);
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
     return paperMatch ? paperMatch[1].trim() : text.replace(/```latex|```/g, '').trim();
 }
 
 export async function fixLatexPaper(paperContent: string, compilationError: string, model: string): Promise<string> {
-    const response = await callModel(model, `Especialista em depuração de LaTeX.`, `Corrija os erros de compilação abaixo:\nErro:\n${compilationError}\n\nCódigo:\n${paperContent}`);
+    const response = await callModel(model, `Corretor de sintaxe LaTeX.`, `Erro:\n${compilationError}\n\nCódigo:\n${paperContent}`);
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
     return paperMatch ? paperMatch[1].trim() : text.replace(/```latex|```/g, '').trim();
 }
 
 export async function reformatPaperWithStyleGuide(paperContent: string, styleGuide: StyleGuide, model: string): Promise<string> {
-    const response = await callModel(model, `Formatador de normas ${styleGuide}.`, `Aplique estritamente as normas ${styleGuide} nas citações e referências deste código:\n${paperContent}`);
+    const response = await callModel(model, `Normas ${styleGuide}.`, `Aplique as normas ${styleGuide} nas citações deste código:\n${paperContent}`);
     const text = response.text || '';
     const paperMatch = text.match(/```latex\s*([\s\S]*?)\s*```/);
     return paperMatch ? paperMatch[1].trim() : text.replace(/```latex|```/g, '').trim();
