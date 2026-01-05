@@ -9,8 +9,8 @@ export const LANGUAGES: LanguageOption[] = [
 ];
 
 export const AVAILABLE_MODELS: {name: string, description: string}[] = [
-    { name: 'gemini-2.5-flash-native-audio-preview-09-2025', description: 'Google: Gemini 2.5 Pro (Native Multi-modal + Thinking)' },
-    { name: 'gemini-2.5-flash-preview-tts', description: 'Google: Gemini 2.5 Flash (Speed optimized)' },
+    { name: 'gemini-3-pro-preview', description: 'Google: Gemini 3 Pro (Complex Reasoning & Higher Quality)' },
+    { name: 'gemini-3-flash-preview', description: 'Google: Gemini 3 Flash (Fast & Efficient)' },
     { name: 'grok-2-latest', description: 'x.ai: Grok-2 (Requires separate Key)' },
 ];
 
