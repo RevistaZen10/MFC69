@@ -18,36 +18,42 @@ const KeyManager = {
     initialized: false,
 
     loadKeys: function() {
+        const envKey = process.env.API_KEY;
         const storedKeys = localStorage.getItem('gemini_api_keys');
         const legacyKey = localStorage.getItem('gemini_api_key');
-        const envKey = (process.env.API_KEY as string);
         
         let newKeys: string[] = [];
 
-        // STRATEGY: Prioritize Env Key (Cloudflare)
-        if (envKey && envKey !== "undefined" && envKey !== "") {
+        // PRIORIDADE 1: Variável de Ambiente do Cloudflare (GEMINI_API_KEY)
+        if (envKey && typeof envKey === 'string' && envKey !== 'undefined' && envKey !== '') {
             newKeys.push(envKey);
         }
 
+        // PRIORIDADE 2: Chaves salvas no LocalStorage
         if (storedKeys) {
             try {
                 const parsed = JSON.parse(storedKeys);
-                const arrayKeys = Array.isArray(parsed) ? parsed.filter(k => k.trim() !== '' && !newKeys.includes(k)) : [];
-                newKeys = [...newKeys, ...arrayKeys];
-            } catch {
-                // Ignore parse errors
+                if (Array.isArray(parsed)) {
+                    parsed.forEach(k => {
+                        if (k && k !== 'undefined' && k !== '' && !newKeys.includes(k)) {
+                            newKeys.push(k);
+                        }
+                    });
+                }
+            } catch (e) {
+                // Ignore parse error
             }
         }
         
-        if (legacyKey && !newKeys.includes(legacyKey)) {
+        if (legacyKey && legacyKey !== 'undefined' && legacyKey !== '' && !newKeys.includes(legacyKey)) {
             newKeys.push(legacyKey);
         }
 
         this.keys = newKeys;
 
         if (!this.initialized && this.keys.length > 0) {
-            this.currentIndex = Math.floor(Math.random() * this.keys.length);
-            console.log(`[KeyManager] Window initialized. API Key Index: ${this.currentIndex + 1}/${this.keys.length}`);
+            // Se houver chave do Cloudflare, ela será a primeira (index 0)
+            this.currentIndex = 0;
             this.initialized = true;
         } else if (this.keys.length > 0) {
             if (this.currentIndex >= this.keys.length) {
@@ -59,7 +65,7 @@ const KeyManager = {
     getCurrentKey: function(): string {
         this.loadKeys(); 
         if (this.keys.length === 0) {
-            throw new Error("Gemini API key not found. Please add keys in the settings modal (gear icon) or set GEMINI_API_KEY env var.");
+            throw new Error("Chave API Gemini não encontrada. Verifique o cadastro no Cloudflare ou use o ícone de engrenagem.");
         }
         return this.keys[this.currentIndex];
     },
@@ -119,7 +125,8 @@ async function executeWithKeyRotation<T>(
             if (shouldRotate && KeyManager.keys.length > 1) {
                 console.warn(`⚠️ API Key exhausted. Attempting to rotate...`);
                 KeyManager.rotate();
-                await delay(5000); 
+                console.log("Waiting 10 seconds before trying next key...");
+                await delay(10000); 
                 continue; 
             }
 
@@ -281,22 +288,11 @@ async function callModel(
 export async function generatePaperTitle(topic: string, language: Language, model: string, discipline: string): Promise<string> {
     const languageName = LANGUAGES.find(l => l.code === language)?.name || 'English';
     const systemInstruction = `Act as an expert academic researcher in ${discipline}. Generate a single, compelling, high-impact scientific paper title.`;
-    const userPrompt = `Topic: "${topic}" in ${discipline}.
-    Task: Generate a single, novel, specific, high-impact research title.
-    Language: **${languageName}**.
-    Constraint: Return ONLY the title text. No quotes.`;
+    const userPrompt = `Topic: "${topic}" in ${discipline}. Task: Generate a single, novel, specific, high-impact research title. Language: **${languageName}**. Constraint: Return ONLY the title text. No quotes.`;
     const response = await callModel(model, systemInstruction, userPrompt);
-    if (!response.candidates || response.candidates.length === 0) {
-        throw new Error("AI returned no candidates for title.");
-    }
-    if (!response.text) {
-         throw new Error("AI returned an empty response text for the title generation.");
-    }
-    return response.text.trim().replace(/"/g, ''); 
+    return response.text?.trim().replace(/"/g, '') || 'Untitled Paper';
 }
 
-
-// Programmatic post-processing to fix common LaTeX issues
 function postProcessLatex(latexCode: string): string {
     let code = latexCode;
     code = code.replace(/\\begin\{figure\*?\}([\s\S]*?)\\end\{figure\*?\}/g, '');
@@ -321,23 +317,16 @@ function postProcessLatex(latexCode: string): string {
             }
         }
     });
-    if (!code.includes('\\end{document}')) {
-        code += '\n\\end{document}';
-    }
+    if (!code.includes('\\end{document}')) code += '\n\\end{document}';
     const docClassIdx = code.indexOf('\\documentclass');
-    if (docClassIdx > 0) {
-        code = code.substring(docClassIdx);
-    }
+    if (docClassIdx > 0) code = code.substring(docClassIdx);
     return code;
 }
 
-// Helper to robustly extract LaTeX code from AI response
 function extractLatexFromResponse(text: string): string {
     if (!text) return '';
     const match = text.match(/```latex\s*([\s\S]*?)\s*```/);
-    if (match && match[1]) {
-        return match[1].trim();
-    }
+    if (match && match[1]) return match[1].trim();
     let cleaned = text.trim();
     if (cleaned.startsWith('```latex')) cleaned = cleaned.substring(8);
     else if (cleaned.startsWith('```')) cleaned = cleaned.substring(3);
@@ -345,16 +334,10 @@ function extractLatexFromResponse(text: string): string {
     return cleaned.trim();
 }
 
-/**
- * Strips comments from LaTeX code to save tokens.
- */
 function stripLatexComments(text: string): string {
     return text.replace(/(^|[^\\])%.*$/gm, '$1').trim();
 }
 
-/**
- * Extracts only the body content between \begin{document} and \end{document}
- */
 function extractDocumentBody(latex: string): string {
     const beginTag = '\\begin{document}';
     const endTag = '\\end{document}';
@@ -366,34 +349,21 @@ function extractDocumentBody(latex: string): string {
     return latex;
 }
 
-/**
- * STRATEGIC OPTIMIZATION:
- * Extracts only the Abstract, Introduction, and Conclusion.
- */
 function extractStrategicContext(latex: string): { text: string, isTruncated: boolean } {
     let combined = "";
     const abstractMatch = latex.match(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/i);
-    if (abstractMatch) {
-        combined += "\\section*{Abstract}\n" + abstractMatch[1].trim() + "\n\n";
-    }
+    if (abstractMatch) combined += "\\section*{Abstract}\n" + abstractMatch[1].trim() + "\n\n";
     const introMatch = latex.match(/\\section\{(?:Introduction|Introdução)\}([\s\S]*?)(?=\\section\{)/i);
     if (introMatch) {
         combined += "\\section{Introduction}\n" + introMatch[1].trim() + "\n\n";
         combined += "\n% ... [MIDDLE SECTIONS OMITTED FOR EFFICIENCY] ...\n\n";
     }
     const conclusionMatch = latex.match(/\\section\{(?:Conclusion|Conclusão|Considerações Finais)\}([\s\S]*?)(?=\\section\{|\\end\{document\})/i);
-    if (conclusionMatch) {
-        combined += "\\section{Conclusion}\n" + conclusionMatch[1].trim() + "\n\n";
-    }
-    if (combined.length < 500) {
-        return { text: extractDocumentBody(latex), isTruncated: false };
-    }
+    if (conclusionMatch) combined += "\\section{Conclusion}\n" + conclusionMatch[1].trim() + "\n\n";
+    if (combined.length < 500) return { text: extractDocumentBody(latex), isTruncated: false };
     return { text: combined, isTruncated: true };
 }
 
-/**
- * Fetches papers from the Semantic Scholar API based on a query.
- */
 async function fetchSemanticScholarPapers(query: string, limit: number = 5): Promise<SemanticScholarPaper[]> {
     try {
         const fields = 'paperId,title,authors,abstract,url'; 
@@ -407,7 +377,6 @@ async function fetchSemanticScholarPapers(query: string, limit: number = 5): Pro
     }
 }
 
-
 export async function generateInitialPaper(title: string, language: Language, pageCount: number, model: string, authorDetails: PersonalData[]): Promise<{ paper: string, sources: PaperSource[] }> {
     const languageName = LANGUAGES.find(l => l.code === language)?.name || 'English';
     const babelLanguage = BABEL_LANG_MAP[language];
@@ -418,28 +387,25 @@ export async function generateInitialPaper(title: string, language: Language, pa
         ? "\n\n**Additional Academic Sources from Semantic Scholar:**\n" +
           semanticScholarPapers.map(p => `- Title: ${p.title}\n  Authors: ${p.authors.map(a => a.name).join(', ')}\n  Abstract: ${p.abstract || 'N/A'}\n  URL: ${p.url}`).join('\n---\n')
         : "";
-    const latexAuthorsBlock = authorDetails.map((author, index) => {
+    const latexAuthorsBlock = authorDetails.map((author) => {
         const name = author.name || 'Unknown Author';
         const affiliation = author.affiliation ? `\\\\ ${author.affiliation}` : '';
         const orcid = author.orcid ? `\\\\ \\small ORCID: \\url{https://orcid.org/${author.orcid}}` : '';
         return `${name}${affiliation}${orcid}`;
     }).join(' \\and\n'); 
     const pdfAuthorNames = authorDetails.map(a => a.name).filter(Boolean).join(', ');
-    const systemInstruction = `Act as a world-class AI specialized in generating LaTeX scientific papers. Write a complete, rigorous paper based on the title, strictly following the provided LaTeX template.
-    **Rules:** NO IMAGES. NO URLs. NO bibitem. Format as plain paragraphs. Language: **${languageName}**.`;
+    const systemInstruction = `Act as a world-class AI specialized in generating LaTeX scientific papers. Write a complete, rigorous paper based on the title, strictly following the provided LaTeX template. **Rules:** NO IMAGES. NO URLs. NO bibitem. Format as plain paragraphs. Language: **${languageName}**.`;
     let templateWithBabelAndAuthor = ARTICLE_TEMPLATE.replace('% Babel package will be added dynamically based on language', `\\usepackage[${babelLanguage}]{babel}`).replace('[INSERT REFERENCE COUNT]', String(referenceCount)).replace('[INSERT NEW REFERENCE LIST HERE]', referencePlaceholders);
     templateWithBabelAndAuthor = templateWithBabelAndAuthor.replace('__ALL_AUTHORS_LATEX_BLOCK__', latexAuthorsBlock);
     templateWithBabelAndAuthor = templateWithBabelAndAuthor.replace('pdfauthor={__PDF_AUTHOR_NAMES_PLACEHOLDER__}', `pdfauthor={${pdfAuthorNames}}`);
     const userPrompt = `Title: "${title}". ${semanticScholarContext}\n**Template:**\n\`\`\`latex\n${templateWithBabelAndAuthor}\n\`\`\``;
     const response = await callModel(model, systemInstruction, userPrompt, { googleSearch: true });
-    if (!response.text) throw new Error("AI returned no text.");
-    let paper = extractLatexFromResponse(response.text);
+    let paper = extractLatexFromResponse(response.text || '');
     if (!paper.includes('\\end{document}')) paper += '\n\\end{document}';
     const sources: PaperSource[] = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.filter(chunk => chunk.web).map(chunk => ({ uri: chunk.web.uri, title: chunk.web.title })) || [];
     return { paper: postProcessLatex(paper), sources };
 }
 
-// Robust JSON cleaner to handle AI hallucinations
 function cleanJsonOutput(text: string): string {
     let cleaned = text.trim();
     cleaned = cleaned.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '');
@@ -448,9 +414,7 @@ function cleanJsonOutput(text: string): string {
 }
 
 export async function analyzePaper(paperContent: string, pageCount: number, model: string): Promise<AnalysisResult> {
-    const analysisTopicsList = ANALYSIS_TOPICS.map(t => `- Topic ${t.num} (${t.name}): ${t.desc}`).join('\n');
-    const systemInstruction = `Act as an expert academic reviewer. Perform a rigorous, objective analysis. Return ONLY valid JSON.
-    Schema: { "analysis": [ { "topicNum": number, "score": number, "improvement": string } ] }`;
+    const systemInstruction = `Act as an expert academic reviewer. Perform a rigorous, objective analysis. Return ONLY valid JSON. Schema: { "analysis": [ { "topicNum": number, "score": number, "improvement": string } ] }`;
     const responseSchema = {
         type: Type.OBJECT,
         properties: {
@@ -476,7 +440,7 @@ export async function analyzePaper(paperContent: string, pageCount: number, mode
     for (let attempt = 1; attempt <= 3; attempt++) {
         try {
             const response = await callModel(model, finalSystemInstruction, paperToAnalyze, { jsonOutput: true, responseSchema: responseSchema });
-            const jsonText = cleanJsonOutput(response.text);
+            const jsonText = cleanJsonOutput(response.text || '');
             const result = JSON.parse(jsonText) as AnalysisResult;
             if (hasUnfilledPlaceholders) {
                 const structureTopicIndex = result.analysis.findIndex(a => a.topicNum === 13);
@@ -492,7 +456,6 @@ export async function analyzePaper(paperContent: string, pageCount: number, mode
     }
     throw new Error("Unexpected error in analysis loop.");
 }
-
 
 export async function improvePaper(paperContent: string, analysis: AnalysisResult, language: Language, model: string): Promise<string> {
     const languageName = LANGUAGES.find(l => l.code === language)?.name || 'English';
@@ -510,8 +473,8 @@ export async function improvePaper(paperContent: string, analysis: AnalysisResul
         bodyToImprove = cleanPaper.substring(docStartIndex);
     }
     const userPrompt = `Context Preamble: ${preamble}\nBody: ${bodyToImprove}\nFeedback: ${improvementPoints}\nTask: Return IMPROVED body.`;
-    const response = await callModel('gemini-2.5-flash', systemInstruction, userPrompt);
-    let improvedBody = extractLatexFromResponse(response.text);
+    const response = await callModel(model, systemInstruction, userPrompt);
+    let improvedBody = extractLatexFromResponse(response.text || '');
     if (docStartIndex !== -1 && !improvedBody.includes('\\documentclass')) {
         return postProcessLatex(preamble + "\n" + improvedBody);
     } 
@@ -522,7 +485,7 @@ export async function fixLatexPaper(paperContent: string, compilationError: stri
     const systemInstruction = `Act as an expert LaTeX debugger. Fix compilation errors. Return full valid LaTeX document.`;
     const userPrompt = `Error: ${compilationError}\nCode:\n\`\`\`latex\n${paperContent}\n\`\`\``;
     const response = await callModel(model, systemInstruction, userPrompt);
-    let paper = extractLatexFromResponse(response.text);
+    let paper = extractLatexFromResponse(response.text || '');
     if (!paper.includes('\\end{document}')) paper += '\n\\end{document}';
     return postProcessLatex(paper);
 }
@@ -532,7 +495,7 @@ export async function reformatPaperWithStyleGuide(paperContent: string, styleGui
     const systemInstruction = `Act as academic editor. Reformat ONLY the References section according to ${styleGuideInfo?.name}.`;
     const userPrompt = `Reformat references.\nDocument:\n\`\`\`latex\n${paperContent}\n\`\`\``;
     const response = await callModel(model, systemInstruction, userPrompt);
-    let paper = extractLatexFromResponse(response.text);
+    let paper = extractLatexFromResponse(response.text || '');
     if (!paper.includes('\\end{document}')) paper += '\n\\end{document}';
     return postProcessLatex(paper);
 }
