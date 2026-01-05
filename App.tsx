@@ -1,8 +1,8 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { generateInitialPaper, analyzePaper, improvePaper, generatePaperTitle, fixLatexPaper, reformatPaperWithStyleGuide } from './services/geminiService';
-import type { Language, IterationAnalysis, PaperSource, AnalysisResult, StyleGuide, ArticleEntry, PersonalData } from './types';
-import { LANGUAGES, AVAILABLE_MODELS, ALL_TOPICS_BY_DISCIPLINE, getAllDisciplines, getRandomTopic, STYLE_GUIDES, TOTAL_ITERATIONS } from './constants';
+import React, { useState, useEffect } from 'react';
+import { generateInitialPaper, analyzePaper, improvePaper, generatePaperTitle } from './services/geminiService';
+import type { Language, PaperSource, PersonalData } from './types';
+import { LANGUAGES, AVAILABLE_MODELS, getAllDisciplines, getRandomTopic } from './constants';
 
 import LanguageSelector from './components/LanguageSelector';
 import ModelSelector from './components/ModelSelector';
@@ -30,11 +30,8 @@ const App: React.FC = () => {
     const [isGenerating, setIsGenerating] = useState(false);
     const [generationProgress, setGenerationProgress] = useState(0);
     const [generationStatus, setGenerationStatus] = useState('');
-    const [generatedTitle, setGeneratedTitle] = useState('');
     const [paperSources, setPaperSources] = useState<PaperSource[]>([]);
-    const [finalLatexCode, setFinalLatexCode] = useState('');
     const [selectedDiscipline, setSelectedDiscipline] = useState<string>(getAllDisciplines()[0]);
-
     const [latexCode, setLatexCode] = useState(`% O código LaTeX gerado aparecerá aqui.`);
     
     const [authors, setAuthors] = useState<PersonalData[]>(() => {
@@ -52,7 +49,6 @@ const App: React.FC = () => {
             pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
 
-        // Verifica status da chave no AI Studio ou Ambiente
         const checkKey = async () => {
             if (window.aistudio?.hasSelectedApiKey) {
                 const hasKey = await window.aistudio.hasSelectedApiKey();
@@ -70,41 +66,45 @@ const App: React.FC = () => {
             await window.aistudio.openSelectKey();
             setHasGeminiKey(true);
         } else {
+            alert("Não foi possível detectar o diálogo de chave. Por favor, utilize o botão de configurações.");
             setIsApiModalOpen(true);
         }
     };
 
     const handleFullAutomation = async () => {
+        if (!hasGeminiKey) {
+            await handleConnectKey();
+            // Proceed assuming success if key selection was triggered
+        }
+        
         setIsGenerating(true);
-        setGenerationStatus("Iniciando fluxo Gemini 2.5...");
+        setGenerationStatus("Preparando Motores Gemini 2.5...");
         setGenerationProgress(5);
         
         try {
             const topic = getRandomTopic(selectedDiscipline);
             const title = await generatePaperTitle(topic, language, analysisModel, selectedDiscipline);
-            setGeneratedTitle(title);
             
-            setGenerationStatus("Gerando artigo (Thinking Ativado)...");
-            setGenerationProgress(40);
+            setGenerationStatus("Gerando Artigo Científico (Thinking Active)...");
+            setGenerationProgress(30);
             const { paper, sources } = await generateInitialPaper(title, language, pageCount, generationModel, authors);
             
-            setGenerationStatus("Análise acadêmica 2.5...");
-            setGenerationProgress(70);
+            setGenerationStatus("Análise de Rigor Acadêmico...");
+            setGenerationProgress(60);
             const analysis = await analyzePaper(paper, pageCount, analysisModel);
             
-            setGenerationStatus("Refinando LaTeX final...");
-            setGenerationProgress(90);
+            setGenerationStatus("Refinando Código LaTeX...");
+            setGenerationProgress(85);
             const improved = await improvePaper(paper, analysis, language, generationModel);
             
-            setFinalLatexCode(improved);
             setLatexCode(improved);
             setPaperSources(sources);
-            setGenerationStatus("Sucesso! Artigo Gerado com 2.5.");
+            setGenerationStatus("Concluído! Artigo Gerado com Sucesso.");
             setGenerationProgress(100);
             setStep(2);
         } catch (error: any) {
             setGenerationStatus(`Erro: ${error.message}`);
-            alert(`Falha na API: ${error.message}. Por favor, reconecte sua chave.`);
+            alert(`Falha Crítica: ${error.message}. Verifique sua chave API.`);
         } finally {
             setIsGenerating(false);
         }
@@ -114,14 +114,14 @@ const App: React.FC = () => {
 
     return (
         <div className="container">
-            <ApiKeyModal isOpen={isApiModalOpen} onClose={() => setIsApiModalOpen(false)} onSave={(keys) => { setHasGeminiKey(keys.gemini.length > 0); setIsApiModalOpen(false); }} />
+            <ApiKeyModal isOpen={isApiModalOpen} onClose={() => setIsApiModalOpen(false)} onSave={() => { setHasGeminiKey(true); setIsApiModalOpen(false); }} />
             <PersonalDataModal isOpen={isPersonalDataModalOpen} onClose={() => setIsPersonalDataModalOpen(false)} onSave={(d) => { setAuthors(d); setIsPersonalDataModalOpen(false); }} initialData={authors} />
             
             <div className="main-header">
                 <div className="flex justify-between items-center">
                     <div>
                         <h1>🔬 Fluxo Integrado de Publicação Científica</h1>
-                        <p>Powered by Gemini 2.5 (High Performance Generation)</p>
+                        <p>Estado da Arte: <strong>Gemini 2.5 High Performance</strong></p>
                     </div>
                     <div className="flex gap-2 items-center">
                         <button 
@@ -130,6 +130,7 @@ const App: React.FC = () => {
                         >
                             {hasGeminiKey ? "✓ Gemini 2.5 Conectado" : "Conectar API Key"}
                         </button>
+                        <button onClick={() => setIsPersonalDataModalOpen(true)} className="p-2 hover:bg-gray-100 rounded-full" title="Autores">👤</button>
                         <button onClick={() => setIsApiModalOpen(true)} className="p-2 hover:bg-gray-100 rounded-full" title="Configurações">⚙️</button>
                     </div>
                 </div>
@@ -151,13 +152,13 @@ const App: React.FC = () => {
                             <LanguageSelector languages={LANGUAGES} selectedLanguage={language} onSelect={setLanguage} />
                             <ModelSelector models={AVAILABLE_MODELS} selectedModel={generationModel} onSelect={setGenerationModel} label="Motor de Geração 2.5:" />
                             <div className="mt-4">
-                                <label className="block text-sm font-bold mb-2">Disciplina:</label>
-                                <select value={selectedDiscipline} onChange={e => setSelectedDiscipline(e.target.value)} className="w-full p-2 border rounded">
+                                <label className="block text-sm font-bold mb-2">Disciplina de Pesquisa:</label>
+                                <select value={selectedDiscipline} onChange={e => setSelectedDiscipline(e.target.value)} className="w-full p-2 border rounded shadow-inner">
                                     {getAllDisciplines().map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                             </div>
-                            <div className="mt-6 text-center">
-                                <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Iniciar Gerador Profissional" loadingText="IA Pensando..." />
+                            <div className="mt-8 text-center">
+                                <ActionButton onClick={handleFullAutomation} disabled={isGenerating} isLoading={isGenerating} text="Iniciar Gerador IA 2.5" loadingText="IA Pensando..." />
                             </div>
                         </div>
                         <div className="bg-gray-50 p-6 rounded-lg flex flex-col justify-center border-2 border-dashed border-gray-200 min-h-[300px]">
@@ -165,13 +166,13 @@ const App: React.FC = () => {
                                 <div className="space-y-4">
                                     <ProgressBar progress={generationProgress} isVisible={true} />
                                     <p className="text-center font-bold text-indigo-600 animate-pulse">{generationStatus}</p>
-                                    <p className="text-xs text-center text-gray-500">O Gemini 2.5 está processando raciocínio acadêmico profundo.</p>
+                                    <p className="text-xs text-center text-gray-400">Modelos 2.5 Pro utilizam cadeias de pensamento para maior precisão.</p>
                                 </div>
                             ) : (
                                 <div className="text-center text-gray-500">
-                                    <p className="text-5xl mb-4">🧬</p>
-                                    <p className="font-bold mb-2">Pronto para a Geração 2.5</p>
-                                    <p className="text-sm">Selecione o modelo 2.5 para obter os melhores resultados científicos com fundamentação teórica sólida.</p>
+                                    <p className="text-6xl mb-4">🧬</p>
+                                    <p className="font-bold text-lg mb-2">Pronto para Geração Avançada</p>
+                                    <p className="text-sm">Selecione os modelos Gemini 2.5 para obter os melhores resultados científicos e fundamentação teórica sólida.</p>
                                 </div>
                             )}
                         </div>
@@ -182,9 +183,9 @@ const App: React.FC = () => {
             {step === 2 && (
                 <div className="card">
                     <LatexCompiler code={latexCode} onCodeChange={setLatexCode} />
-                    <div className="mt-4 flex gap-4">
-                        <button onClick={() => setStep(3)} className="btn btn-success flex-1">Seguir para Zenodo</button>
-                        <button onClick={() => setStep(1)} className="btn bg-gray-200 flex-1">Ajustar Configurações</button>
+                    <div className="mt-6 flex gap-4">
+                        <button onClick={() => setStep(3)} className="btn btn-success flex-1 shadow-md">Seguir para Publicação (DOI)</button>
+                        <button onClick={() => setStep(1)} className="btn bg-gray-100 flex-1 hover:bg-gray-200 border">Voltar e Ajustar</button>
                     </div>
                 </div>
             )}
